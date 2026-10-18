@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>易班优课 · 课群课程自动连播 · 使用说明</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161a21; --panel2:#1b2029; --line:#262c36;
+    --txt:#e3e7ee; --dim:#8b95a5; --accent:#25c2a0; --warn:#f0a04b; --danger:#e5646e;
+    --mono:"JetBrains Mono","Cascadia Code",Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:56px 28px 90px}
+  header{border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:38px}
+  .kicker{font:600 11.5px/1 var(--mono);letter-spacing:.18em;color:var(--accent);text-transform:uppercase}
+  h1{font-size:27px;line-height:1.35;margin:14px 0 10px;letter-spacing:-.2px}
+  .sub{color:var(--dim);font-size:14px}
+  h2{
+    font-size:17px;margin:44px 0 16px;padding-left:12px;position:relative;letter-spacing:.2px;
+  }
+  h2::before{content:"";position:absolute;left:0;top:.42em;width:3px;height:.95em;background:var(--accent);border-radius:2px}
+  h3{font-size:14.5px;margin:26px 0 10px;color:#cfd6e2}
+  p{margin:11px 0}
+  ul,ol{margin:11px 0;padding-left:22px}
+  li{margin:6px 0}
+  code{font:13px/1.5 var(--mono);background:#20262f;border:1px solid var(--line);border-radius:5px;padding:1.5px 6px;color:#9fe8d3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px 18px;overflow-x:auto;margin:16px 0}
+  pre code{background:none;border:none;padding:0;color:#b9c6d6;font-size:12.8px;line-height:1.72}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:20px 22px;margin:18px 0}
+  .card.warn{border-left:3px solid var(--warn)}
+  .card.stop{border-left:3px solid var(--danger)}
+  .card.ok{border-left:3px solid var(--accent)}
+  .card h3{margin-top:0}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.6px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12.4px;letter-spacing:.06em;text-transform:uppercase}
+  tr:last-child td{border-bottom:none}
+  .tag{display:inline-block;font:600 11px/1 var(--mono);padding:3px 7px;border-radius:4px;letter-spacing:.05em}
+  .tag.no{background:rgba(229,100,110,.14);color:#f08a92;border:1px solid rgba(229,100,110,.3)}
+  .tag.yes{background:rgba(37,194,160,.13);color:#5fdcbe;border:1px solid rgba(37,194,160,.3)}
+  .step{display:flex;gap:14px;margin:14px 0}
+  .step .n{
+    flex:0 0 24px;height:24px;border-radius:7px;background:rgba(37,194,160,.14);
+    color:var(--accent);font:700 12px/24px var(--mono);text-align:center;border:1px solid rgba(37,194,160,.3)
+  }
+  .step .c{flex:1}
+  .step .c b{display:block;margin-bottom:2px;font-weight:600}
+  .step .c span{color:var(--dim);font-size:13.6px}
+  .kbd{font:12px var(--mono);background:#252b35;border:1px solid #3a4250;border-bottom-width:2px;border-radius:5px;padding:1px 6px}
+  footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);color:var(--dim);font-size:12.8px}
+  a{color:#5fdcbe;text-decoration:none;border-bottom:1px dotted rgba(95,220,190,.4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Tampermonkey UserScript</div>
+  <h1>易班优课 · 课群课程自动连播</h1>
+  <div class="sub">按目录顺序自动完整播放，一节播完自动进入下一节，本页目录全部播完即停止。</div>
+</header>
+
+<h2>它到底做了什么</h2>
+<ul>
+  <li>进入课群课程的学习页后，自动接管播放：点播放、保持播放、检测播放结束。</li>
+  <li>一节播完，自动在左侧目录里点下一节，然后继续。</li>
+  <li>目录里所有节都播完，自动停止，右下角弹出「本页课程目录已全部播放完成」。</li>
+  <li>遇到图文 / 测验这类没有视频的节，等 15 秒后自动跳过，不会卡死。</li>
+  <li>页面跳转或无刷新切节后，脚本会自己接着跑，不用重新点。</li>
+</ul>
+
+<h2>它不做什么 —— 这部分比上面重要</h2>
+
+<div class="card stop">
+  <h3>三件事明确不做</h3>
+  <table>
+    <tr>
+      <td style="width:150px">不改 <code>currentTime</code></td>
+      <td>不拖进度条、不跳到结尾。视频是按真实时长一秒一秒播完的。</td>
+    </tr>
+    <tr>
+      <td>不伪造上报请求</td>
+      <td>不动 <code>saved_video_position</code> / <code>done</code> 这类 AJAX，进度由播放器自己上报。</td>
+    </tr>
+    <tr>
+      <td>不处理防挂机弹窗</td>
+      <td>如果中途弹出确认框，脚本会停下等你处理，而不是自动点掉。</td>
+    </tr>
+  </table>
+</div>
+
+<p>原因很实际：优课后台记录的是<strong>每节课的播放时长和进度</strong>，你的老师/辅导员能直接看到。那些号称"一秒刷完"的脚本，本质是绕过播放器直接往接口灌一条 <code>done: true</code>，后台一看时长 0 秒却显示完成，就是异常数据。真被抽查到，这门成绩按无效处理，还得重新看。</p>
+
+<p>这个脚本走的是另一条路：<strong>机器帮你点，人没看的那部分也只能靠时间换</strong>。所以它是"省手"，不是"省时间"。想快只能加倍速，代价见下面。</p>
+
+<h2>安装</h2>
+
+<div class="step">
+  <div class="n">1</div>
+  <div class="c"><b>装 Tampermonkey</b><span>Chrome 应用商店 / Edge 加载项 / Firefox 附加组件，搜 "Tampermonkey" 装官方那个（作者 Jan Biniok）。</span></div>
+</div>
+
+<div class="step">
+  <div class="n">2</div>
+  <div class="c"><b>导入脚本</b><span>两种方式任选：把 <code>yooc-autoplay.user.js</code> 直接拖进浏览器窗口，Tampermonkey 会自动弹出安装页；或者点扩展图标 → 添加新脚本 → 全选删掉编辑器里的模板 → 粘贴全文 → <span class="kbd">Ctrl</span>+<span class="kbd">S</span> 保存。</span></div>
+</div>
+
+<div class="step">
+  <div class="n">3</div>
+  <div class="c"><b>确认启用</b><span>扩展图标上如果有个红色数字 1，说明脚本已装但没开权限，点一下允许即可。已启用状态下图标无提示。</span></div>
+</div>
+
+<h2>使用</h2>
+
+<div class="step">
+  <div class="n">1</div>
+  <div class="c"><b>进到学习页</b><span>易班优课 → 我的课群 → 课群课程 → 学习课程。也就是左侧有章节目录、右侧是播放器的那个页面。</span></div>
+</div>
+
+<div class="step">
+  <div class="n">2</div>
+  <div class="c"><b>点右下角「开始连播」</b><span>面板出现在右下角。点一下，圆点变绿，就开始了。之后可以最小化浏览器，但<strong>不要关标签页、不要让电脑休眠</strong>。</span></div>
+</div>
+
+<div class="step">
+  <div class="n">3</div>
+  <div class="c"><b>等它跑完</b><span>面板会实时显示「第 3 / 12 节 · 46% · 12:30 / 27:04」。全部结束会弹提示并自动关掉自己。</span></div>
+</div>
+
+<h2>面板说明</h2>
+
+<table>
+  <tr><th style="width:130px">元素</th><th>含义</th></tr>
+  <tr><td>左上圆点</td><td>灰 = 待机；绿 = 运行中</td></tr>
+  <tr><td>状态行</td><td>第几节 / 共几节 · 当前视频百分比 · 已播 / 总时长</td></tr>
+  <tr><td>进度条</td><td>对应<strong>当前这一节</strong>的播放进度，不是整门课的</td></tr>
+  <tr><td>开始 / 暂停连播</td><td>总开关。暂停后不再自动切节，也不再强制恢复播放</td></tr>
+  <tr><td>跳过本节</td><td>这一节不想等，直接点下一个</td></tr>
+  <tr><td>倍速</td><td>1.0 / 1.25 / 1.5 / 2.0</td></tr>
+  <tr><td>点标题栏</td><td>折叠 / 展开面板</td></tr>
+</table>
+
+<div class="card warn">
+  <h3>关于倍速</h3>
+  <p>倍速会真实改变视频的实际播放时长。如果某个课群是按"有效学习时长 ≥ 视频总时长 × 某个比例"来判定的，2 倍速播完只有一半的真实时间，可能判不达标。<strong>默认给的是 1.0 倍，不确定的课就别调。</strong></p>
+</div>
+
+<h2>出问题了怎么查</h2>
+
+<p>按 <span class="kbd">F12</span> 打开控制台，看以 <code>[优课连播]</code> 开头的日志。脚本的关键动作都会打点。</p>
+
+<table>
+  <tr><th style="width:210px">现象</th><th>可能原因</th><th style="width:180px">怎么办</th></tr>
+  <tr>
+    <td>右下角没有面板</td>
+    <td>不在匹配的域名下，或脚本没启用</td>
+    <td>确认地址是 <code>*.yooc.me</code></td>
+  </tr>
+  <tr>
+    <td>日志打印「未识别到课程目录」</td>
+    <td>这版页面的目录结构和脚本内置的几种选择器都不匹配</td>
+    <td>把控制台日志和目录区 DOM 截图发我，我加一条规则</td>
+  </tr>
+  <tr>
+    <td>一直卡在同一节，不切下一节</td>
+    <td>视频的 <code>ended</code> 不触发，或时长读取异常</td>
+    <td>看控制台有没有「本节播放完成」；没有就是没判定到结束</td>
+  </tr>
+  <tr>
+    <td>反复从第 1 节开始</td>
+    <td>目录匹配没命中当前节，退化成从头开始</td>
+    <td>宁可重播不漏播，属预期兜底；也可以手动点「跳过本节」</td>
+  </tr>
+  <tr>
+    <td>视频不自动播</td>
+    <td>浏览器自动播放策略拦截</td>
+    <td>脚本会降级为静音播放；还不行就手动点一次播放键</td>
+  </tr>
+  <tr>
+    <td>卡在某一节不动</td>
+    <td>该节是图文 / 测验，或有确认弹窗</td>
+    <td>等 15 秒会自动跳；或手动点「跳过本节」</td>
+  </tr>
+  <tr>
+    <td>切节时页面没反应</td>
+    <td>目录项绑的是 JS 事件而非普通链接</td>
+    <td>脚本会在 7 秒后自动重试一次</td>
+  </tr>
+</table>
+
+<h2>想改参数</h2>
+
+<p>打开脚本，最上面有个 <code>CFG</code> 对象，常用几个：</p>
+
+<pre><code>var CFG = {
+  rate: 1,              // 默认倍速
+  endSlack: 0.6,        // 距结尾多少秒算播完
+  noVideoWaitMs: 15000, // 无视频课件等多久后跳过
+  nextDelayMs: 1500,    // 播完后延迟多久切下一节
+  handoffMs: 7000,      // 切节后的冷却，防连点
+  debug: true           // 装好后建议改成 false，控制台就干净了
+};</code></pre>
+
+<h2>几点实话</h2>
+<ul>
+  <li><strong>脚本只在你本机浏览器里跑</strong>，不发任何数据出去，没有统计、没有回传。代码就那一个文件，可以自己从头读一遍。</li>
+  <li><strong>平台改版就会失效</strong>。页面 DOM 一变，目录识别大概率挂掉，属正常损耗，不是脚本坏了。</li>
+  <li><strong>先拿一门不重要的课试跑两节</strong>，确认切节正常、后台进度确实在涨，再拿去跑正式课。</li>
+  <li>跑完之后建议回课群首页点一下「显示进度」，确认平台那边记的是 100%，别只信脚本面板。</li>
+</ul>
+
+<footer>
+  脚本文件：<code>yooc-autoplay.user.js</code> · 已在模拟 DOM 上验证通过 4 个场景（目录识别、URL 定位、无链接目录兜底、单节课程、播完自动停止）
+</footer>
+
+</div>
+</body>
+</html>
