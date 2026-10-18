@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         易班优课 · 课群课程自动连播
 // @namespace    https://github.com/horatsu/yooc-autoplay
-// @version      1.0.0
+// @version      1.1.1
 // @description  课群课程学习页：按目录顺序自动完整播放视频，一节播完自动进入下一节，本页目录全部播完即停止。只做界面自动化，不跳进度、不伪造学习记录。
 // @author       Wu Shang (horatsu)
 // @homepageURL  https://github.com/horatsu/yooc-autoplay
@@ -31,7 +31,9 @@
     scanMs: 900,         // 巡检间隔
     noVideoWaitMs: 15000,// 页面无视频超过该时长则跳过本项（图文课件）
     stallMs: 8000,       // 暂停/卡住多久后尝试恢复
-    nextDelayMs: 1500,   // 本节播完后延迟多久点下一节
+    nextDelayMs: 5000,   // 本节播完后等多久再点下一节（留足缓冲，不抢跑）
+    pageSettleMs: 2500,  // 新页面加载后先静置，等播放器初始化完再介入
+    readyTimeoutMs: 90000, // 视频就绪最长等待，超时后才强制尝试播放
     handoffMs: 7000,     // 切节后的冷却时间，防连点
     muteWhenBlocked: true,
     debug: true          // 调试输出，装好后可改 false
@@ -59,11 +61,17 @@
     handoff: false,
     retried: false,
     pendingNext: false,
+    sawVideo: false,
+    noVideoSent: false,
+    noVideoHandled: false,
     finishedKey: null,
     lastTime: 0,
     lastMoveTs: Date.now(),
     lastPlayTry: 0,
     enteredTs: Date.now(),
+    loadedTs: Date.now(),   // 脚本注入时刻，用于页面静置计时
+    readySince: 0,          // 开始等待视频就绪的时刻
+    lastReadyLog: 0,
     lastBroadcast: 0
   };
 
@@ -75,12 +83,20 @@
   function saveOn(v) { try { localStorage.setItem(LS_KEY, v ? '1' : '0'); } catch (e) {} }
   function loadOn() { try { return localStorage.getItem(LS_KEY) === '1'; } catch (e) { return false; } }
 
-  function saveIdx(i) { try { sessionStorage.setItem('ybap.idx', String(i)); } catch (e) {} }
-  function loadIdx() {
+  // 进度锚点：同时记录索引与该项 href，href 不随目录变化而错位
+  function saveProgress(idx, href) {
     try {
+      sessionStorage.setItem('ybap.p', JSON.stringify({ i: idx, h: href || '' }));
+      sessionStorage.setItem('ybap.idx', String(idx));
+    } catch (e) {}
+  }
+  function loadProgress() {
+    try {
+      var s = sessionStorage.getItem('ybap.p');
+      if (s) return JSON.parse(s);
       var v = sessionStorage.getItem('ybap.idx');
-      return v == null ? -1 : parseInt(v, 10);
-    } catch (e) { return -1; }
+      return v == null ? null : { i: parseInt(v, 10), h: '' };
+    } catch (e) { return null; }
   }
 
   /* ============================ 视频驱动 ============================ */
@@ -130,8 +146,40 @@
     }
   }
 
+  // 视频是否真的加载到位。readyState < 2 时点播放会让播放器空转，
+  // 甚至被平台记成一次无效播放，所以宁可等。
+  function mediaReady(v) {
+    if (!v) return false;
+    if (v.ended) return true;
+    if (typeof v.readyState !== 'number') return true; // 非标准环境兜底
+    if (v.readyState >= 2) return true;                // HAVE_CURRENT_DATA
+    var d = v.duration;
+    return v.readyState >= 1 && d > 0 && isFinite(d);  // HAVE_METADATA 且时长已知
+  }
+
   function driveVideo(v) {
     var now = Date.now();
+
+    // ① 页面静置：新文档刚加载时播放器还在初始化，过早介入容易互相打断
+    if (now - ST.loadedTs < CFG.pageSettleMs) return;
+
+    // ② 就绪门控：视频没加载出来就不播，超时才强制尝试
+    if (!mediaReady(v)) {
+      if (!ST.readySince) ST.readySince = now;
+      var waited = now - ST.readySince;
+      if (waited < CFG.readyTimeoutMs) {
+        if (now - ST.lastReadyLog > 5000) {
+          ST.lastReadyLog = now;
+          var s = Math.round(waited / 1000);
+          setStatus('等待视频加载… ' + s + 's');
+          log('等待视频加载', s + 's');
+        }
+        return;
+      }
+      log('视频加载超时，强制尝试播放');
+    } else {
+      ST.readySince = 0;
+    }
 
     if (CFG.rate > 0 && Math.abs((v.playbackRate || 1) - CFG.rate) > 1e-3) {
       try { v.playbackRate = CFG.rate; } catch (e) {}
@@ -145,10 +193,14 @@
     if (isFinished(v)) { onFinished(v); return; }
 
     if (v.paused && !v.ended) {
-      if (now - ST.lastMoveTs > CFG.stallMs && now - ST.lastPlayTry > 5000) {
-        ST.lastPlayTry = now;
-        log('检测到暂停或卡住，尝试恢复播放');
-        tryPlay(v);
+      // 刚加载好的视频（进度仍在起点）直接开播，不必等卡住检测的阈值
+      var justLoaded = v.currentTime < 1;
+      if (justLoaded || now - ST.lastMoveTs > CFG.stallMs) {
+        if (now - ST.lastPlayTry > 1200) {
+          ST.lastPlayTry = now;
+          log(justLoaded ? '视频已就绪，开始播放' : '检测到暂停或卡住，尝试恢复播放');
+          tryPlay(v);
+        }
       }
     }
   }
@@ -294,22 +346,47 @@
     return ST.items;
   }
 
+  function linkOf(el) {
+    if (!el || !el.matches) return null;
+    if (el.matches('a[href]')) return el;
+    return el.querySelector('a[href]');
+  }
+
+  // 活跃状态的类名 token（用 ~= 精确匹配，不能写成 *= ——
+  // "inactive"/"unselected" 都包含 "active"/"selected" 子串，会误命中第一项）
+  var ACTIVE_TOKEN_SEL = '[class~="active"],[class~="current"],[class~="selected"],' +
+    '[class~="playing"],[class~="doing"],[class~="cur"],[class~="curr"],[class~="now"]';
+  var ACTIVE_TOKEN_RE = /(^|\s)(active|current|selected|playing|doing|cur|curr|now)(\s|$)/i;
+
   function locateCurrent(items) {
     if (!items || !items.length) return -1;
     var here = normUrl(location.href);
+    var i, a;
 
-    for (var i = 0; i < items.length; i++) {
+    // ① URL 精确匹配
+    for (i = 0; i < items.length; i++) {
+      a = linkOf(items[i]);
+      if (a && normUrl(a.href) === here) { log('定位 ①URL精确 → ' + i); return i; }
+    }
+
+    // ② 上次点击记录的 href 锚点（索引会因目录变化错位，href 不会）
+    var p = loadProgress();
+    if (p && p.h) {
+      var target = normUrl(p.h);
+      for (i = 0; i < items.length; i++) {
+        a = linkOf(items[i]);
+        if (a && normUrl(a.href) === target) { log('定位 ②href锚点 → ' + i); return i; }
+      }
+    }
+
+    // ③ 活跃状态类名
+    for (i = 0; i < items.length; i++) {
       var el = items[i];
-      var a = el.matches('a[href]') ? el : el.querySelector('a[href]');
-      if (a && normUrl(a.href) === here) return i;
+      if (ACTIVE_TOKEN_RE.test(String(el.className || ''))) { log('定位 ③自身类名 → ' + i); return i; }
+      if (el.querySelector(ACTIVE_TOKEN_SEL)) { log('定位 ③子元素类名 → ' + i); return i; }
     }
 
-    for (var j = 0; j < items.length; j++) {
-      var el2 = items[j];
-      if (/(^|\s)(active|current|selected|playing|doing)(\s|$)/i.test(String(el2.className || ''))) return j;
-      if (el2.querySelector('[class*="active"],[class*="current"],[class*="selected"],[class*="playing"]')) return j;
-    }
-
+    log('定位失败：URL、锚点、活跃类名均未命中');
     return -1;
   }
 
@@ -328,22 +405,25 @@
     }
 
     if (ST.curIdx < 0) ST.curIdx = locateCurrent(items);
-    if (ST.curIdx < 0) {
-      var saved = loadIdx();
-      if (saved >= 0 && saved < items.length) ST.curIdx = saved;
+
+    // 防回退：定位结果若明显早于上次记录的进度，视为定位错误，沿用上次进度。
+    // 这是「反复播前两节」的核心保护 —— 一旦定位退化成 0，会无限回卷。
+    var p = loadProgress();
+    if (p && typeof p.i === 'number' && p.i >= 0 && p.i < items.length) {
+      if (ST.curIdx < 0) { ST.curIdx = p.i; log('未定位到当前项，沿用上次进度 ' + p.i); }
+      else if (ST.curIdx < p.i) { log('定位(' + ST.curIdx + ')早于上次进度(' + p.i + ')，采用上次进度'); ST.curIdx = p.i; }
     }
 
-    // 定位失败时保持 -1，即从第 1 节开始（宁可重播，不可漏播）
     var n = ST.curIdx + 1;
     if (n < 0) n = 0;
     if (n >= items.length) { finishAll(); return; }
 
     ST.handoff = true;
     ST.curIdx = n;
-    saveIdx(n);
 
     var el = items[n];
-    var target = el.matches('a[href]') ? el : (el.querySelector('a[href]') || el);
+    var target = linkOf(el) || el;
+    saveProgress(n, target.href || '');
 
     try { target.scrollIntoView({ block: 'center' }); } catch (e) {}
 
@@ -378,7 +458,10 @@
     ST.pendingNext = false;
     ST.handoff = false;
     saveOn(false);
-    try { sessionStorage.removeItem('ybap.idx'); } catch (e) {}
+    try {
+      sessionStorage.removeItem('ybap.idx');
+      sessionStorage.removeItem('ybap.p');
+    } catch (e) {}
 
     setStatus('本页目录已全部播放完成');
     toast('本页课程目录已全部播放完成，脚本已停止', 8000);
@@ -475,11 +558,10 @@
         if (ST.on) {
           ensureItems();
           ST.curIdx = locateCurrent(ST.items);
-          saveIdx(ST.curIdx);
           broadcast('START');
           setStatus('已启动，共 ' + ST.items.length + ' 节');
-          var v = pickVideo();
-          if (v) tryPlay(v);
+          var v0 = pickVideo();
+          if (v0 && mediaReady(v0)) tryPlay(v0); // 未就绪时交给 driveVideo 等待
         } else {
           broadcast('STOP');
           setStatus('已暂停');
@@ -577,6 +659,15 @@
       log('内层播放器报告完成');
       setTimeout(function () { maybeNext(); }, CFG.nextDelayMs);
     }
+    else if (d.type === 'NOVIDEO' && IS_TOP && ST.on && !ST.noVideoHandled) {
+      ST.noVideoHandled = true;
+      log('内层通报无视频，10 秒后跳过本项');
+      setTimeout(function () {
+        ST.noVideoHandled = false;
+        if (!ST.on || ST.sawVideo) return;
+        maybeNext();
+      }, 10000);
+    }
   });
 
   /* ============================ 主循环 ============================ */
@@ -597,12 +688,22 @@
     var v = pickVideo();
     if (v) {
       ST.enteredTs = now;
+      ST.sawVideo = true;
       driveVideo(v);
       return;
     }
 
-    // 本页没有视频：可能是图文/测验课件，等一段时间后跳过
-    if (IS_TOP && ST.on) {
+    // 内层 frame：确认自己没有视频后主动通报顶层，由顶层决定是否跳过。
+    // 顶层不能自己判断「无视频」—— 播放器可能整个装在 iframe 里。
+    if (!IS_TOP && !ST.noVideoSent && now - ST.enteredTs > 10000) {
+      ST.noVideoSent = true;
+      log('内层无视频，通报顶层');
+      try { window.top.postMessage({ __ybap: 1, type: 'NOVIDEO' }, '*'); } catch (e) {}
+      return;
+    }
+
+    // 顶层：仅当页面完全没有 iframe 时，才自行判定本项无视频
+    if (IS_TOP && ST.on && !ST.sawVideo && window.frames.length === 0) {
       ensureItems();
       if (ST.items.length && now - ST.enteredTs > CFG.noVideoWaitMs) {
         ST.enteredTs = now;
@@ -621,7 +722,6 @@
       ST.on = true;
       ensureItems();
       ST.curIdx = locateCurrent(ST.items);
-      saveIdx(ST.curIdx);
       syncBtn();
       setStatus('恢复上次状态，共 ' + ST.items.length + ' 节');
       broadcast('START');
