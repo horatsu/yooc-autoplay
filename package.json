@@ -1,0 +1,13 @@
+{
+  "name": "yooc-autoplay",
+  "version": "1.1.1",
+  "description": "Tampermonkey userscript: plays YOOC course lessons in catalog order",
+  "private": true,
+  "scripts": {
+    "test": "node test/regression.js"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
+  },
+  "license": "MIT"
+}
