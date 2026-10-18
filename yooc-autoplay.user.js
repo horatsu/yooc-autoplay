@@ -1,9 +1,14 @@
 // ==UserScript==
 // @name         易班优课 · 课群课程自动连播
-// @namespace    yooc.autoplay.local
+// @namespace    https://github.com/horatsu/yooc-autoplay
 // @version      1.0.0
 // @description  课群课程学习页：按目录顺序自动完整播放视频，一节播完自动进入下一节，本页目录全部播完即停止。只做界面自动化，不跳进度、不伪造学习记录。
-// @author       xiper
+// @author       Wu Shang (horatsu)
+// @homepageURL  https://github.com/horatsu/yooc-autoplay
+// @supportURL   https://github.com/horatsu/yooc-autoplay/issues
+// @updateURL    https://raw.githubusercontent.com/horatsu/yooc-autoplay/main/yooc-autoplay.user.js
+// @downloadURL  https://raw.githubusercontent.com/horatsu/yooc-autoplay/main/yooc-autoplay.user.js
+// @license      MIT
 // @match        *://*.yooc.me/*
 // @match        *://yooc.me/*
 // @match        *://*.yiban.cn/*
